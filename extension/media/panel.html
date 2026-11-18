@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{CSP}} 'unsafe-inline'; script-src 'nonce-{{NONCE}}';">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --fondo: var(--vscode-sideBar-background, #080C12);
+    --texto: #E6EDF5;
+    --suave: #7F8B9B;
+    --linea: rgba(255,255,255,.07);
+    --bien: #00F0FF;
+    --ambar: #FFB547;
+    --rojo: #FF3B5C;
+    --claude: #FF8A5B;
+    --gpt: #19E3A0;
+    --gem-a: #4C8DFF;
+    --gem-b: #B967FF;
+    --num: 'Arial Narrow', 'Helvetica Neue', var(--vscode-font-family, system-ui), sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 8px 10px 14px; background: var(--fondo); color: var(--texto);
+    font-family: var(--vscode-font-family, -apple-system, system-ui, sans-serif); font-size: 12px; }
+
+  /* pestañas: texto con subrayado */
+  .tabs { display: flex; gap: 14px; border-bottom: 1px solid var(--linea); margin-bottom: 12px; }
+  .tab { border: 0; background: none; padding: 4px 0 6px; color: var(--suave); font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer;
+    border-bottom: 1.5px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+  .tab.activa { color: var(--texto); border-color: var(--bien); }
+  .tab:focus-visible, .act:focus-visible { outline: 1px solid var(--bien); outline-offset: 2px; }
+
+  /* los tres anillos, de un vistazo */
+  .trio { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 10px; }
+  .ia { --m: var(--bien); --e: var(--bien); display: flex; flex-direction: column; align-items: center; min-width: 0; }
+  .ia.claude { --m: var(--claude); } .ia.gpt { --m: var(--gpt); } .ia.gemini { --m: var(--gem-a); }
+  .ia.ambar { --e: var(--ambar); } .ia.rojo { --e: var(--rojo); }
+  .anillo { position: relative; width: min(62px, 100%); aspect-ratio: 1; }
+  .anillo svg { width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; }
+  .anillo .pista { fill: none; stroke: rgba(255,255,255,.07); stroke-width: 5; }
+  .ia.rojo .anillo .pista { stroke: rgba(255,59,92,.18); }
+  .anillo .valor { fill: none; stroke: var(--e); stroke-width: 5; transition: stroke-dashoffset 1s cubic-bezier(.2,.8,.2,1);
+    filter: drop-shadow(0 0 3px var(--e)); }
+  .ia.rojo .anillo .valor { animation: latido 1.4s ease-in-out infinite; }
+  .anillo .num { position: absolute; inset: 0; display: grid; place-items: center; }
+  .anillo .num b { font-family: var(--num); font-weight: 400; font-size: 22px; line-height: 1; color: var(--texto); font-variant-numeric: tabular-nums; }
+  .ia.ambar .anillo .num b, .ia.rojo .anillo .num b { color: var(--e); }
+  .anillo .num b small { font-size: 11px; opacity: .55; }
+  .ia .nom { margin-top: 6px; font-size: 11.5px; font-weight: 650; color: var(--m); white-space: nowrap; }
+  .ia.gemini .nom { background: linear-gradient(90deg, var(--gem-a), var(--gem-b)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .ia .per { font-size: 10px; color: var(--suave); white-space: nowrap; }
+  .ia.cargando .anillo .valor { opacity: .35; }
+  @keyframes latido { 50% { opacity: .45; } }
+
+  /* estado en una línea */
+  .estado { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 11px; color: var(--suave); margin: 0 0 12px; text-align: center; }
+  .punto { width: 6px; height: 6px; border-radius: 50%; background: var(--bien); box-shadow: 0 0 6px var(--bien); flex: none; }
+  .estado.ambar { color: var(--ambar); } .estado.ambar .punto { background: var(--ambar); box-shadow: 0 0 6px var(--ambar); }
+  .estado.rojo { color: var(--rojo); } .estado.rojo .punto { background: var(--rojo); box-shadow: 0 0 6px var(--rojo); }
+  .estado.gris .punto { background: var(--suave); box-shadow: none; }
+
+  /* detalle: una fila por IA */
+  .det { --m: var(--bien); padding: 8px 0; border-top: 1px solid var(--linea); }
+  .det.claude { --m: var(--claude); } .det.gpt { --m: var(--gpt); } .det.gemini { --m: var(--gem-a); }
+  .det .l1 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .det .quien { font-size: 11.5px; font-weight: 650; color: var(--m); white-space: nowrap; }
+  .det .quien small { font-weight: 500; color: var(--suave); font-size: 10.5px; margin-left: 4px; }
+  .det .rec { font-size: 10.5px; color: var(--suave); text-align: right; }
+  .det .rec b { color: var(--texto); font-weight: 600; white-space: nowrap; }
+  .det .l2 { display: flex; align-items: center; gap: 7px; margin-top: 6px; font-size: 10px; color: var(--suave); }
+  .barra { flex: 1; height: 3px; border-radius: 99px; background: rgba(255,255,255,.08); overflow: hidden; }
+  .barra > div { height: 100%; border-radius: 99px; width: 0; transition: width 1s cubic-bezier(.2,.8,.2,1); }
+  .det .l2 b { font-family: var(--num); font-weight: 400; font-size: 13px; color: var(--texto); min-width: 26px; text-align: right; }
+  .det .extra { margin-top: 5px; font-size: 10px; color: var(--suave); }
+  .det .error { margin-top: 3px; font-size: 10.5px; color: var(--rojo); }
+
+  .pie { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-top: 8px; border-top: 1px solid var(--linea); font-size: 10px; color: var(--suave); }
+  .act { border: 0; background: none; color: var(--bien); padding: 0; font: inherit; font-size: 10.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .act[disabled] { opacity: .5; cursor: default; }
+
+  /* guía */
+  .guia .g { --m: var(--bien); padding: 9px 0 9px 10px; border-bottom: 1px solid var(--linea); position: relative; }
+  .guia .g::before { content: ""; position: absolute; left: 0; top: 11px; bottom: 11px; width: 2px; border-radius: 2px; background: var(--m); }
+  .guia .g.claude { --m: var(--claude); } .guia .g.gpt { --m: var(--gpt); } .guia .g.gemini { --m: var(--gem-a); }
+  .guia h3 { margin: 0; font-size: 12px; font-weight: 650; color: var(--m); display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 6px; }
+  .guia h3 small { font-size: 10px; font-weight: 500; color: var(--suave); }
+  .guia ul { list-style: none; margin: 5px 0 4px; padding: 0; }
+  .guia li { font-size: 11px; line-height: 1.45; }
+  .guia li::before { content: "· "; color: var(--m); font-weight: 700; }
+  .guia .no { font-size: 10px; color: var(--suave); }
+  .guia .no b { color: var(--m); font-weight: 600; }
+  .nota-final { font-size: 10px; color: var(--suave); margin-top: 9px; }
+
+  /* chats recientes: rellenan el espacio debajo de los contadores */
+  .chats { margin-top: 16px; }
+  .chats .cab { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+  .chats h4 { margin: 0; font-size: 10.5px; font-weight: 600; color: var(--suave); letter-spacing: .2px; }
+  .chats .cuenta { font-size: 10px; color: var(--suave); }
+  .buscar { width: 100%; background: rgba(255,255,255,.04); border: 1px solid var(--linea); border-radius: 6px; color: var(--texto);
+    font: inherit; font-size: 11.5px; padding: 5px 8px; margin-bottom: 4px; outline: none; }
+  .buscar:focus { border-color: rgba(0,240,255,.45); }
+  .buscar::placeholder { color: var(--suave); }
+  .chat { display: flex; align-items: flex-start; gap: 7px; width: 100%; background: none; border: 0; border-radius: 6px; padding: 6px 5px;
+    color: var(--texto); font: inherit; text-align: left; cursor: pointer; }
+  .chat:hover, .chat:focus-visible { background: rgba(0,240,255,.07); outline: none; }
+  .chat .dot { width: 6px; height: 6px; border-radius: 50%; margin-top: 5px; flex: none; background: rgba(255,255,255,.18); }
+  .chat .dot.vivo { background: var(--gpt); box-shadow: 0 0 6px var(--gpt); }
+  .chat .dot.listo { background: var(--gem-b); box-shadow: 0 0 6px var(--gem-b); }
+  .chat .h.listo { color: var(--gem-b); font-weight: 600; }
+  /* abierto y ya revisado: aro cian (antes se veía igual que un chat viejo) */
+  .chat .dot.abierto { background: transparent; box-shadow: inset 0 0 0 1.5px var(--bien), 0 0 5px rgba(0,240,255,.4); }
+  .chat .h.vivo { color: var(--gpt); font-weight: 600; }
+  .chat .h.abierto { color: var(--bien); }
+  /* activos resaltados; los cerrados, tenues */
+  .chat.activo .t { font-weight: 600; color: var(--texto); }
+  .chat:not(.activo) .t { color: #AEB8C6; }
+  .chat .x { flex: none; width: 16px; height: 16px; margin-left: 2px; border-radius: 4px; display: grid; place-items: center;
+    font-size: 13px; line-height: 1; color: var(--suave); opacity: .55; }
+  .chat:hover .x, .chat .x:focus-visible { opacity: 1; }
+  .chat .x:hover { background: rgba(255,255,255,.08); color: var(--texto); }
+  .grupo { font-size: 9.5px; font-weight: 700; color: var(--suave); text-transform: uppercase; letter-spacing: .6px; margin: 10px 5px 3px; }
+  .grupo:first-child { margin-top: 4px; }
+  .chat .txt { min-width: 0; flex: 1; }
+  .chat .t { display: block; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chat .p { display: block; font-size: 10px; color: var(--suave); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chat .h { font-size: 10px; color: var(--suave); white-space: nowrap; margin-top: 1px; }
+  .chats .nada { font-size: 10.5px; color: var(--suave); padding: 6px 5px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .anillo .valor, .barra > div { transition: none; animation: none !important; }
+  }
+</style></head>
+<body>
+  <div class="tabs" role="tablist">
+    <button class="tab activa" data-vista="cuota" role="tab">Cuota</button>
+    <button class="tab" data-vista="guia" role="tab">Para qué sirve</button>
+  </div>
+  <div id="vista-cuota">
+    <div id="cuota"></div>
+    <div class="chats">
+      <div class="cab"><h4>Chats</h4><span class="cuenta" id="cuenta"></span></div>
+      <input class="buscar" id="buscar" type="search" placeholder="Buscar chat…" aria-label="Buscar chat">
+      <div id="lista"></div>
+    </div>
+  </div>
+  <div id="guia" class="guia" hidden></div>
+<script nonce="{{NONCE}}">
+  const vscode = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : { postMessage: () => {} }
+  // Mismo orden que la pestaña Cuota: Claude, GPT, Gemini.
+  const GUIA = [
+    { clase: 'claude', quien: 'Claude', como: 'chat de Claude Code', para: [
+      'Construir y decidir con el contexto de tu proyecto',
+      'Tus herramientas conectadas (MCP)',
+      'Textos, diseño y código con criterio',
+      'Revisar lo que hagan Gemini y GPT'],
+      no: 'resumir montañas de texto (eso, Gemini)' },
+    { clase: 'gpt', quien: 'GPT', como: '/gpt · /imagen · Codex', para: [
+      'Imágenes, siempre por aquí',
+      'Revisar código antes de publicar',
+      'Segunda opinión con ojos frescos',
+      'Bugs o scripts sueltos en Codex'],
+      no: 'decisiones de fondo sobre tu proyecto' },
+    { clase: 'gemini', quien: 'Gemini', como: '/gemini · agy', para: [
+      'Leer repos, PDFs y transcripciones',
+      'Resumir y encontrar en material largo',
+      'Tareas repetitivas en lote (Flash)',
+      'Segunda opinión sobre un plan'],
+      no: 'decisiones que dependen de tu proyecto' },
+  ]
+  const R = 40, CIRC = 2 * Math.PI * R
+  let datos = null
+  const previo = {} // último valor dibujado: anima del anterior al nuevo, no desde cero
+
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+  const pct = w => Math.max(0, Math.min(100, Math.round(w.queda)))
+  const nivel = p => p >= 50 ? 'bien' : p >= 20 ? 'ambar' : 'rojo'
+  const corto = w => w.etiqueta.includes('5') ? '5 horas' : 'semanal'
+  const colorNivel = n => n === 'rojo' ? 'var(--rojo)' : n === 'ambar' ? 'var(--ambar)' : 'var(--bien)'
+  function dentroDe(iso) {
+    if (!iso) return ''
+    const ms = Date.parse(iso) - Date.now()
+    if (isNaN(ms)) return ''
+    if (ms <= 0) return 'ya'
+    const min = Math.round(ms / 60000)
+    if (min < 60) return min + ' min'
+    const h = Math.floor(min / 60)
+    if (h < 24) return h + ' h ' + (min % 60) + ' min'
+    const d = Math.round(h / 24)
+    return d + ' día' + (d === 1 ? '' : 's')
+  }
+  function haceMin(ms) { return ms ? Math.round((Date.now() - ms) / 60000) : null }
+
+  // Para cada IA: el tanque que manda (el más bajo) va en el anillo; el otro, en la barra del detalle.
+  function ordenar(ventanas) {
+    const vs = (ventanas || []).slice().sort((a, b) => pct(a) - pct(b))
+    return { manda: vs[0] || null, otro: vs[1] || null }
+  }
+
+  function anillo(ia) {
+    const { manda } = ordenar(ia.ventanas)
+    const n = manda ? nivel(pct(manda)) : 'bien'
+    let h = '<div class="ia ' + ia.clase + (n !== 'bien' ? ' ' + n : '') + (datos && datos.cargando ? ' cargando' : '') + '"><div class="anillo"><svg viewBox="0 0 96 96">' +
+      '<circle class="pista" cx="48" cy="48" r="' + R + '"/>'
+    if (manda) {
+      const p = pct(manda)
+      const cap = p >= 92 && p < 100 ? 'butt' : 'round' // con remate redondo, arriba de ~92% se ve un bulto en la unión
+      h += '<circle class="valor" cx="48" cy="48" r="' + R + '" stroke-linecap="' + cap + '" stroke-dasharray="' + CIRC.toFixed(2) +
+        '" stroke-dashoffset="' + (previo[ia.clase] ?? CIRC).toFixed(2) + '" data-id="' + ia.clase + '" data-p="' + p + '"/>'
+    }
+    h += '</svg><div class="num"><b>' + (manda ? pct(manda) + '<small>%</small>' : '—') + '</b></div></div>'
+    h += '<div class="nom">' + esc(ia.nombre) + '</div><div class="per">' + (manda ? corto(manda) : (ia.error ? 'error' : datos && datos.cargando ? 'leyendo…' : 'sin datos')) + '</div></div>'
+    return h
+  }
+
+  function detalle(ia) {
+    const { manda, otro } = ordenar(ia.ventanas)
+    let h = '<div class="det ' + ia.clase + '"><div class="l1"><span class="quien">' + esc(ia.nombre) + '<small>' + esc(ia.plan) + '</small></span>'
+    if (manda) h += manda.recargado || !manda.recarga ? '<span class="rec"><b>ya se recargó</b></span>'
+      : '<span class="rec">recarga en <b>' + esc(dentroDe(manda.recarga)) + '</b></span>'
+    h += '</div>'
+    if (ia.error) h += '<div class="error">' + esc(ia.error) + '</div>'
+    if (otro) {
+      const p = pct(otro), c = colorNivel(nivel(p))
+      h += '<div class="l2"><span>' + corto(otro) + '</span><div class="barra"><div style="background:' + c + ';width:' + (previo[ia.clase + 's'] ?? 0) +
+        '%" data-id="' + ia.clase + 's" data-w="' + p + '"></div></div><b>' + p + '%</b></div>'
+    }
+    if (ia.extra) h += '<div class="extra">' + esc(ia.extra) + '</div>'
+    return h + '</div>'
+  }
+
+  function estado(ias) {
+    const todas = []
+    ias.forEach(ia => (ia.ventanas || []).forEach(w => todas.push({ nombre: ia.nombre, p: pct(w), per: corto(w) })))
+    if (!todas.length) return '<div class="estado gris"><span class="punto"></span>' + (datos && datos.cargando ? 'leyendo tus cuotas…' : 'sin datos todavía') + '</div>'
+    const peor = todas.reduce((a, b) => (b.p < a.p ? b : a)), n = nivel(peor.p)
+    const txt = n === 'bien' ? 'Todo bien · mínimo ' + peor.nombre + ' ' + peor.p + '%'
+      : (n === 'rojo' ? 'Ojo: ' : 'Cuidado: ') + peor.nombre + ' (' + peor.per + ') al ' + peor.p + '%'
+    return '<div class="estado' + (n === 'bien' ? '' : ' ' + n) + '"><span class="punto"></span>' + esc(txt) + '</div>'
+  }
+
+  function animar() {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      document.querySelectorAll('.anillo .valor').forEach(c => { const v = CIRC * (1 - c.dataset.p / 100); c.style.strokeDashoffset = v.toFixed(2); previo[c.dataset.id] = v })
+      document.querySelectorAll('.barra > div').forEach(b => { b.style.width = b.dataset.w + '%'; previo[b.dataset.id] = Number(b.dataset.w) })
+    }))
+  }
+
+  function pintar() {
+    const cont = document.getElementById('cuota')
+    const gpt = datos && datos.gpt, gem = datos && datos.gemini, cl = datos && datos.claude
+    const edad = cl ? haceMin(cl.actualizado) : null
+    const ias = [
+      { clase: 'claude', nombre: 'Claude', plan: '', ventanas: cl ? cl.ventanas : [], error: null,
+        extra: !cl ? 'aparece cuando uses Claude Code' : edad > 30 ? 'dato de hace ' + (edad < 120 ? edad + ' min' : Math.round(edad / 60) + ' h') : '' },
+      { clase: 'gpt', nombre: 'GPT', plan: gpt && gpt.plan ? gpt.plan.charAt(0).toUpperCase() + gpt.plan.slice(1) : 'ChatGPT',
+        ventanas: gpt ? gpt.ventanas : [], error: gpt && !gpt.ok ? gpt.error : null,
+        extra: gpt && gpt.reinicios > 0 ? gpt.reinicios + ' reinicios gratis · vencen en ' + dentroDe(gpt.reinicioVence) : '' },
+      { clase: 'gemini', nombre: 'Gemini', plan: 'AI Pro',
+        ventanas: gem && gem.ventanas ? gem.ventanas.filter(w => w.grupo.startsWith('Gemini')) : [], error: gem && !gem.ok ? gem.error : null, extra: '' },
+    ]
+    const m = datos ? haceMin(datos.actualizado) : null
+    cont.innerHTML =
+      '<div class="trio">' + ias.map(anillo).join('') + '</div>' +
+      estado(ias) +
+      ias.map(detalle).join('') +
+      '<div class="pie"><span>' + (datos && datos.cargando ? 'actualizando…' : m === null ? 'sin datos' : m < 1 ? 'actualizado hace un momento' : 'actualizado hace ' + m + ' min') + '</span>' +
+      '<button class="act" id="act"' + (datos && datos.cargando ? ' disabled' : '') + '>Actualizar</button></div>'
+    document.getElementById('act').onclick = () => vscode.postMessage({ tipo: 'actualizar' })
+    animar()
+  }
+
+  document.getElementById('guia').innerHTML = GUIA.map(g =>
+    '<div class="g ' + g.clase + '"><h3>' + esc(g.quien) + '<small>' + esc(g.como) + '</small></h3><ul>' +
+    g.para.map(p => '<li>' + esc(p) + '</li>').join('') + '</ul><div class="no"><b>No para:</b> ' + esc(g.no) + '</div></div>'
+  ).join('') + '<div class="nota-final">Gemini y GPT solo cuando tú lo pidas; Claude te los puede sugerir.</div>'
+
+  // ── Chats recientes ── la lista se repinta sola; el buscador no se toca para no perder lo que escribes.
+  const VISIBLES = 12
+  function hace(ms) {
+    const min = Math.round((Date.now() - ms) / 60000)
+    if (min < 1) return 'ahora'
+    if (min < 60) return min + 'm'
+    const h = Math.round(min / 60)
+    return h < 24 ? h + 'h' : Math.round(h / 24) + 'd'
+  }
+  function pintarChats() {
+    const lista = document.getElementById('lista'), cuenta = document.getElementById('cuenta')
+    const todos = (datos && datos.chats) || []
+    const q = document.getElementById('buscar').value.trim().toLowerCase()
+    const filtrados = q ? todos.filter(c => (c.titulo + ' ' + c.proyecto).toLowerCase().includes(q)) : todos.slice(0, VISIBLES)
+    const vivos = todos.filter(c => c.vivo).length
+    // el proyecto solo se muestra si es distinto del más común (casi todos son de la misma carpeta)
+    const cuantos = {}; todos.forEach(c => { cuantos[c.proyecto] = (cuantos[c.proyecto] || 0) + 1 })
+    const comun = Object.keys(cuantos).sort((a, b) => cuantos[b] - cuantos[a])[0]
+    const listos = todos.filter(c => c.listo).length
+    cuenta.textContent = [vivos ? vivos + ' trabajando' : '', listos ? listos + (listos === 1 ? ' listo' : ' listos') : ''].filter(Boolean).join(' · ')
+    if (!todos.length) { lista.innerHTML = '<div class="nada">' + (datos ? 'leyendo tus chats…' : '') + '</div>'; return }
+    const fila = c => {
+      const estado = c.vivo ? 'vivo' : c.listo ? 'listo' : c.abierto ? 'abierto' : ''
+      const tiempo = c.vivo ? 'ahora' : c.listo ? 'listo' : hace(c.mtime)
+      return '<button class="chat' + (c.abierto ? ' activo' : '') + '" data-id="' + esc(c.id) + '" title="' + esc(c.titulo) + '"><span class="dot ' + estado + '"></span>' +
+        '<span class="txt"><span class="t">' + esc(c.titulo) + '</span>' + (c.proyecto && c.proyecto !== comun ? '<span class="p">' + esc(c.proyecto) + '</span>' : '') + '</span>' +
+        '<span class="h ' + estado + '">' + tiempo + '</span>' +
+        // × para mandarlo a inactivo (no en los que están trabajando: volverían solos a Activos)
+        (c.abierto && !c.vivo ? '<span class="x" role="button" tabindex="0" data-cerrar="' + esc(c.id) + '" title="Mandar a inactivo">×</span>' : '') +
+        '</button>'
+    }
+    if (q) {
+      lista.innerHTML = filtrados.length ? filtrados.map(fila).join('') : '<div class="nada">Ningún chat con «' + esc(q) + '»</div>'
+      return
+    }
+    // Activos arriba (los que tienes abiertos, trabajando primero), luego los recientes ya cerrados.
+    const peso = c => (c.vivo ? 0 : c.listo ? 1 : 2)
+    const activos = todos.filter(c => c.abierto).sort((a, b) => peso(a) - peso(b) || b.mtime - a.mtime)
+    const cerrados = todos.filter(c => !c.abierto).slice(0, Math.max(4, VISIBLES - activos.length))
+    lista.innerHTML =
+      (activos.length ? '<div class="grupo">Activos · ' + activos.length + '</div>' + activos.map(fila).join('') : '') +
+      (cerrados.length ? '<div class="grupo">Recientes</div>' + cerrados.map(fila).join('') : '')
+  }
+  document.getElementById('lista').addEventListener('click', e => {
+    const x = e.target.closest('[data-cerrar]')
+    if (x) { e.stopPropagation(); vscode.postMessage({ tipo: 'cerrar', id: x.dataset.cerrar }); return }
+    const b = e.target.closest('.chat')
+    if (b) vscode.postMessage({ tipo: 'abrir', id: b.dataset.id })
+  })
+  document.getElementById('buscar').addEventListener('input', pintarChats)
+
+  document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.toggle('activa', x === b))
+    document.getElementById('vista-cuota').hidden = b.dataset.vista !== 'cuota'
+    document.getElementById('guia').hidden = b.dataset.vista !== 'guia'
+  })
+  window.addEventListener('message', e => { if (e.data && e.data.tipo === 'datos') { datos = e.data.datos; pintar(); pintarChats() } })
+  setInterval(() => { if (datos) { pintar(); pintarChats() } }, 60000) // los tiempos avanzan solos; los anillos no se reinician
+  pintar()
+  vscode.postMessage({ tipo: 'listo' })
+</script>
+</body></html>

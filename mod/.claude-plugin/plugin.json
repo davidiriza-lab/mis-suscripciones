@@ -1,0 +1,5 @@
+{
+  "name": "mis-suscripciones",
+  "version": "0.1.0",
+  "description": "Guarda la cuota de Claude en ~/.claude/cuota-claude.json para el panel Mis suscripciones de VS Code"
+}
