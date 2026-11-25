@@ -10,6 +10,8 @@ Uso:
   cuenta-claude <n|nombre>      cambia a esa cuenta (número de la lista o nombre)
   cuenta-claude borrar <nombre> quita una cuenta guardada
   cuenta-claude renombrar <n|nombre> <nuevo>  le cambia el nombre
+  cuenta-claude plan <n|nombre> <plan>        fija a mano el plan que se muestra (Anthropic no siempre
+                                              lo reporta bien en cuentas Team); «auto» lo quita
   cuenta-claude --json          la lista en JSON (la usa la extensión Mis suscripciones)
   cuenta-claude --uso           igual, más cuánto le queda a cada cuenta (pregunta a Anthropic)
 
@@ -156,6 +158,11 @@ def respaldar_activa(ind, nombre=None):
     return entrada
 
 
+def plan_de(c):
+    """El plan fijado a mano manda sobre el que reporta Anthropic."""
+    return c.get("plan_manual") or c.get("plan", "")
+
+
 def normal(t):
     """Sin acentos ni mayúsculas, para que «trabajo» encuentre «Trabajo» y «sofia» a «Sofía»."""
     return "".join(ch for ch in unicodedata.normalize("NFD", t) if unicodedata.category(ch) != "Mn").lower()
@@ -178,7 +185,7 @@ def listar(ind):
     for i, c in enumerate(ind["cuentas"], 1):
         marca = "●" if c is act else " "
         org = f" · {c['organizacion']}" if c.get("organizacion") else ""
-        print(f" {marca} {i}. {c['nombre']:<12} {c.get('email', '')}  ({c.get('plan', '')}{org})")
+        print(f" {marca} {i}. {c['nombre']:<12} {c.get('email', '')}  ({plan_de(c)}{org})")
     if act is None:
         print("\n  La sesión activa no está guardada. Corre: cuenta-claude guardar <nombre>")
 
@@ -250,7 +257,7 @@ def uso(ind):
     ahora_ms = time.time() * 1000
     res = []
     for i, c in enumerate(ind["cuentas"], 1):
-        fila = {"n": i, "nombre": c["nombre"], "email": c.get("email", ""), "plan": c.get("plan", ""),
+        fila = {"n": i, "nombre": c["nombre"], "email": c.get("email", ""), "plan": plan_de(c),
                 "activa": c is act, "ventanas": [], "error": None}
         try:
             if fila["activa"]:
@@ -291,7 +298,7 @@ def main():
         respaldar_activa(ind)
         act = entrada_activa(ind)
         print(json.dumps({"cuentas": [{"n": i, "nombre": c["nombre"], "email": c.get("email", ""),
-                                       "plan": c.get("plan", ""), "activa": c is act}
+                                       "plan": plan_de(c), "activa": c is act}
                                       for i, c in enumerate(ind["cuentas"], 1)]}, ensure_ascii=False))
     elif args[0] == "guardar":
         nombre = args[1] if len(args) > 1 else oauth_account().get("emailAddress", "cuenta").split("@")[0]
@@ -317,6 +324,14 @@ def main():
                                capture_output=True)
         print(f"«{c['nombre']}» ahora se llama «{nuevo}».")
         c["nombre"] = nuevo
+        guardar_indice(ind)
+        listar(ind)
+    elif args[0] == "plan" and len(args) > 2:
+        c = buscar(ind, args[1])
+        if args[2].lower() == "auto":
+            c.pop("plan_manual", None)
+        else:
+            c["plan_manual"] = " ".join(args[2:])
         guardar_indice(ind)
         listar(ind)
     elif args[0] in ("-h", "--help", "ayuda"):
