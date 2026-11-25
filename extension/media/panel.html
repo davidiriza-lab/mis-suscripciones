@@ -71,6 +71,19 @@
   .det .l2 b { font-family: var(--num); font-weight: 400; font-size: 13px; color: var(--texto); min-width: 26px; text-align: right; }
   .det .extra { margin-top: 5px; font-size: 10px; color: var(--suave); }
   .det .error { margin-top: 3px; font-size: 10.5px; color: var(--rojo); }
+  .cuentas { margin-top: 10px; }
+  .cuentas .tit { font-size: 9.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--suave); margin-bottom: 2px; }
+  .cta { display: flex; align-items: center; gap: 8px; width: calc(100% + 12px); margin: 0 -6px; padding: 5px 6px; border: 0; border-radius: 6px;
+    background: none; color: var(--texto); font: inherit; font-size: 11px; text-align: left; cursor: pointer; }
+  .cta:hover:not(:disabled) { background: rgba(255,255,255,.045); }
+  .cta:disabled { cursor: default; }
+  .cta:focus-visible { outline: 1px solid var(--claude); outline-offset: 0; }
+  .cta .pt { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+  .cta.activa .pt { background: var(--claude); box-shadow: 0 0 6px var(--claude); }
+  .cta .nom { width: 80px; flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--suave); }
+  .cta.activa .nom { color: var(--claude); font-weight: 650; }
+  .cta b { font-family: var(--num); font-weight: 400; font-size: 13px; min-width: 30px; text-align: right; color: var(--texto); }
+  .cta b.gris { font-family: inherit; font-size: 10px; color: var(--suave); }
 
   .pie { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-top: 8px; border-top: 1px solid var(--linea); font-size: 10px; color: var(--suave); }
   .act { border: 0; background: none; color: var(--bien); padding: 0; font: inherit; font-size: 10.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
@@ -121,6 +134,11 @@
   .chat .txt { min-width: 0; flex: 1; }
   .chat .t { display: block; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .chat .p { display: block; font-size: 10px; color: var(--suave); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chat .largo { display: block; font-size: 10px; font-weight: 600; color: var(--ambar); white-space: nowrap; }
+  .chat .largo.n2 { color: var(--rojo); }
+  .chat .largo.cerr { color: var(--suave); font-weight: 500; }
+  .chat .limpio { color: var(--bien); font-weight: 600; cursor: pointer; }
+  .chat .limpio:hover, .chat .limpio:focus-visible { text-decoration: underline; outline: none; }
   .chat .h { font-size: 10px; color: var(--suave); white-space: nowrap; margin-top: 1px; }
   .chats .nada { font-size: 10.5px; color: var(--suave); padding: 6px 5px; }
 
@@ -217,13 +235,37 @@
       : '<span class="rec">recarga en <b>' + esc(dentroDe(manda.recarga)) + '</b></span>'
     h += '</div>'
     if (ia.error) h += '<div class="error">' + esc(ia.error) + '</div>'
-    if (otro) {
+    // Claude con varias cuentas: la lista de Cuentas ya muestra la activa, así que no se repite la barra.
+    const conCuentas = ia.clase === 'claude' && ((datos && datos.cuentas) || []).length > 1
+    if (otro && !conCuentas) {
       const p = pct(otro), c = colorNivel(nivel(p))
       h += '<div class="l2"><span>' + corto(otro) + '</span><div class="barra"><div style="background:' + c + ';width:' + (previo[ia.clase + 's'] ?? 0) +
         '%" data-id="' + ia.clase + 's" data-w="' + p + '"></div></div><b>' + p + '%</b></div>'
     }
     if (ia.extra) h += '<div class="extra">' + esc(ia.extra) + '</div>'
+    if (ia.clase === 'claude') h += cuentas()
     return h + '</div>'
+  }
+
+  // Cuentas de Claude (de `cuenta-claude --uso`): una fila por cuenta con nombre, barrita y lo que le queda
+  // (la ventana más baja, 5 horas o semanal). Clic en otra fila = cambiar a esa cuenta. Orden fijo.
+  function cuentas() {
+    const cs = (datos && datos.cuentas) || []
+    if (cs.length < 2) return ''
+    const cambiando = datos.cambiandoCuenta
+    return '<div class="cuentas"><div class="tit">Cuentas</div>' + cs.map(c => {
+      const { manda } = ordenar(c.ventanas)
+      let barra = '<div class="barra"></div>', num = '<b class="gris">—</b>'
+      if (c.error) num = '<b class="gris" title="' + esc(c.error) + '">sin dato</b>'
+      else if (manda) {
+        const p = pct(manda), id = 'cta' + c.n
+        barra = '<div class="barra"><div style="background:' + colorNivel(nivel(p)) + ';width:' + (previo[id] ?? 0) + '%" data-id="' + id + '" data-w="' + p + '"></div></div>'
+        num = '<b>' + p + '%</b>'
+      }
+      return '<button class="cta' + (c.activa ? ' activa' : '') + '" data-cuenta="' + c.n + '" title="' +
+        esc(c.email + (c.plan ? ' · ' + c.plan : '') + (c.activa ? ' · en uso' : ' · clic para cambiar')) + '"' + (c.activa || cambiando ? ' disabled' : '') + '>' +
+        '<span class="pt"></span><span class="nom">' + esc(cambiando === c.n ? 'cambiando…' : c.nombre) + '</span>' + barra + num + '</button>'
+    }).join('') + '</div>'
   }
 
   function estado(ias) {
@@ -264,6 +306,7 @@
       '<div class="pie"><span>' + (datos && datos.cargando ? 'actualizando…' : m === null ? 'sin datos' : m < 1 ? 'actualizado hace un momento' : 'actualizado hace ' + m + ' min') + '</span>' +
       '<button class="act" id="act"' + (datos && datos.cargando ? ' disabled' : '') + '>Actualizar</button></div>'
     document.getElementById('act').onclick = () => vscode.postMessage({ tipo: 'actualizar' })
+    cont.querySelectorAll('[data-cuenta]').forEach(b => { b.onclick = () => vscode.postMessage({ tipo: 'cuenta', n: Number(b.dataset.cuenta) }) })
     animar()
   }
 
@@ -293,11 +336,23 @@
     const listos = todos.filter(c => c.listo).length
     cuenta.textContent = [vivos ? vivos + ' trabajando' : '', listos ? listos + (listos === 1 ? ' listo' : ' listos') : ''].filter(Boolean).join(' · ')
     if (!todos.length) { lista.innerHTML = '<div class="nada">' + (datos ? 'leyendo tus chats…' : '') + '</div>'; return }
+    // Línea extra debajo del título: sesión cerrada (con botón para abrir un chat limpio) o chat largo.
+    const mil = c => Math.round(c.tokens / 1000) + ' mil'
+    const limpio = c => ' · <span class="limpio" role="button" tabindex="0" data-limpio="' + esc(c.id) + '" title="Cierra esta pestaña y abre un chat nuevo (igual que /clear)">Abrir limpio</span>'
+    const nota = c => {
+      if (!c.abierto) return ''
+      if (c.cerrada && c.despues) return '<span class="largo n2">cerrado, sigues pagando ' + mil(c) + limpio(c) + '</span>'
+      if (c.cerrada) return '<span class="largo cerr">sesión cerrada' + limpio(c) + '</span>'
+      if (c.largo) return '<span class="largo n' + c.largo + '" title="Contexto del chat: cada mensaje cuesta más. Conviene seguir en uno nuevo.">' + mil(c) + ' tokens' + limpio(c) + '</span>'
+      return ''
+    }
     const fila = c => {
       const estado = c.vivo ? 'vivo' : c.listo ? 'listo' : c.abierto ? 'abierto' : ''
       const tiempo = c.vivo ? 'ahora' : c.listo ? 'listo' : hace(c.mtime)
       return '<button class="chat' + (c.abierto ? ' activo' : '') + '" data-id="' + esc(c.id) + '" title="' + esc(c.titulo) + '"><span class="dot ' + estado + '"></span>' +
-        '<span class="txt"><span class="t">' + esc(c.titulo) + '</span>' + (c.proyecto && c.proyecto !== comun ? '<span class="p">' + esc(c.proyecto) + '</span>' : '') + '</span>' +
+        '<span class="txt"><span class="t">' + esc(c.titulo) + '</span>' + (c.proyecto && c.proyecto !== comun ? '<span class="p">' + esc(c.proyecto) + '</span>' : '') +
+        // chat largo: cada mensaje reenvía todo el contexto; ámbar desde 300 mil, rojo desde 500 mil
+        nota(c) + '</span>' +
         '<span class="h ' + estado + '">' + tiempo + '</span>' +
         // × para mandarlo a inactivo (no en los que están trabajando: volverían solos a Activos)
         (c.abierto && !c.vivo ? '<span class="x" role="button" tabindex="0" data-cerrar="' + esc(c.id) + '" title="Mandar a inactivo">×</span>' : '') +
@@ -316,6 +371,8 @@
       (cerrados.length ? '<div class="grupo">Recientes</div>' + cerrados.map(fila).join('') : '')
   }
   document.getElementById('lista').addEventListener('click', e => {
+    const lim = e.target.closest('[data-limpio]')
+    if (lim) { e.stopPropagation(); vscode.postMessage({ tipo: 'limpio', id: lim.dataset.limpio }); return }
     const x = e.target.closest('[data-cerrar]')
     if (x) { e.stopPropagation(); vscode.postMessage({ tipo: 'cerrar', id: x.dataset.cerrar }); return }
     const b = e.target.closest('.chat')

@@ -1,8 +1,8 @@
 {
   "name": "mis-suscripciones",
   "displayName": "Mis suscripciones",
-  "description": "Cuánto te queda de Claude, ChatGPT y Gemini, y tus chats de Claude Code en vivo.",
-  "version": "0.1.0",
+  "description": "Cuánto te queda de Claude (en todas tus cuentas), ChatGPT y Gemini, y tus chats de Claude Code en vivo.",
+  "version": "0.11.2",
   "publisher": "davidiriza-lab",
   "license": "MIT",
   "engines": { "vscode": "^1.80.0" },

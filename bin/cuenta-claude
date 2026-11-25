@@ -1,0 +1,308 @@
+#!/usr/bin/env python3
+"""cuenta-claude: tener varias cuentas de Claude guardadas y cambiar sin volver a loguear.
+
+Solo Mac (usa el Llavero). En Linux el panel funciona con una sola cuenta.
+
+Uso:
+  cuenta-claude                 lista las cuentas guardadas y marca la activa
+  cuenta-claude guardar [nombre] guarda la cuenta con la que estás logueado ahora
+  cuenta-claude <n|nombre>      cambia a esa cuenta (número de la lista o nombre)
+  cuenta-claude borrar <nombre> quita una cuenta guardada
+  cuenta-claude renombrar <n|nombre> <nuevo>  le cambia el nombre
+  cuenta-claude --json          la lista en JSON (la usa la extensión Mis suscripciones)
+  cuenta-claude --uso           igual, más cuánto le queda a cada cuenta (pregunta a Anthropic)
+
+Cómo funciona: Claude Code guarda la sesión en el Llavero ("Claude Code-credentials").
+Este script guarda una copia de la parte de Claude de cada cuenta en el Llavero
+("Claude Code-cuenta", una entrada por cuenta) y al cambiar la intercambia.
+Los tokens de tus conectores MCP no se tocan.
+Antes de cada cambio vuelve a guardar la cuenta activa, porque Claude renueva sus tokens.
+"""
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+import unicodedata
+import urllib.error
+import urllib.request
+
+USER = os.environ.get("USER") or os.getlogin()
+SVC_ACTIVA = "Claude Code-credentials"
+SVC_CUENTA = "Claude Code-cuenta"
+CLAUDE_JSON = os.path.expanduser("~/.claude.json")
+INDICE = os.path.expanduser("~/.claude/cuentas-claude.json")
+URL_USO = "https://api.anthropic.com/api/oauth/usage"
+URL_TOKEN = "https://platform.claude.com/v1/oauth/token"
+CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"  # el de Claude Code
+UA = "cuenta-claude/1.0"
+
+
+def leer_llavero(svc, acct):
+    r = subprocess.run(["security", "find-generic-password", "-s", svc, "-a", acct, "-w"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    return json.loads(r.stdout.strip())
+
+
+def escribir_llavero(svc, acct, data):
+    hexdata = json.dumps(data, separators=(",", ":")).encode().hex()
+    r = subprocess.run(["security", "add-generic-password", "-U", "-s", svc, "-a", acct, "-X", hexdata],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"No pude escribir en el Llavero ({svc}): {r.stderr.strip()}")
+
+
+def leer_indice():
+    try:
+        with open(INDICE) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {"cuentas": []}
+
+
+def guardar_indice(ind):
+    escribir_json_atomico(INDICE, ind)
+
+
+def escribir_json_atomico(ruta, data):
+    d = os.path.dirname(ruta)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-cuenta-")
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, ruta)
+
+
+def activa():
+    data = leer_llavero(SVC_ACTIVA, USER)
+    if not data or "claudeAiOauth" not in data:
+        sys.exit("No hay sesión de Claude en el Llavero. Inicia sesión con /login primero.")
+    return data
+
+
+def oauth_account():
+    with open(CLAUDE_JSON) as f:
+        return json.load(f).get("oauthAccount", {})
+
+
+def identificar(data, ind):
+    """accountUuid de la sesión activa. Las cuentas Team no lo traen en el Llavero:
+    entonces se busca por refreshToken entre las guardadas y, si no, se usa ~/.claude.json."""
+    oauth = data["claudeAiOauth"]
+    if oauth.get("accountUuid"):
+        return oauth["accountUuid"]
+    rt = oauth.get("refreshToken")
+    for c in ind["cuentas"]:
+        ranura = leer_llavero(SVC_CUENTA, c["nombre"]) or {}
+        if rt and ranura.get("claudeAiOauth", {}).get("refreshToken") == rt:
+            return c["uuid"]
+    return oauth_account().get("accountUuid")
+
+
+def uuid_activa(ind):
+    return identificar(activa(), ind)
+
+
+def respaldar_activa(ind, nombre=None):
+    """Guarda la sesión activa en su ranura (la que tenga su mismo accountUuid, o `nombre`)."""
+    data = activa()
+    oauth = data["claudeAiOauth"]
+    acc = oauth_account()
+    uuid = identificar(data, ind)
+    if acc.get("accountUuid") != uuid:
+        acc = {}  # .claude.json todavía no se actualizó; no mezclar datos de otra cuenta
+    entrada = next((c for c in ind["cuentas"] if c["uuid"] == uuid), None)
+    if entrada is None:
+        if nombre is None:
+            return None
+        if any(c["nombre"] == nombre for c in ind["cuentas"]):
+            sys.exit(f"Ya existe una cuenta llamada «{nombre}» con otro correo. Usa otro nombre.")
+        entrada = {"nombre": nombre, "uuid": uuid}
+        ind["cuentas"].append(entrada)
+    elif nombre and nombre != entrada["nombre"]:
+        entrada["nombre"] = nombre
+    previa = leer_llavero(SVC_CUENTA, entrada["nombre"]) or {}
+    escribir_llavero(SVC_CUENTA, entrada["nombre"], {
+        "claudeAiOauth": oauth,
+        "organizationUuid": data.get("organizationUuid"),
+        "oauthAccount": acc or previa.get("oauthAccount", {}),
+    })
+    if acc:
+        entrada["email"] = acc.get("emailAddress", entrada.get("email", ""))
+        entrada["plan"] = oauth.get("subscriptionType", "")
+    guardar_indice(ind)
+    return entrada
+
+
+def normal(t):
+    """Sin acentos ni mayúsculas, para que «trabajo» encuentre «Trabajo» y «sofia» a «Sofía»."""
+    return "".join(ch for ch in unicodedata.normalize("NFD", t) if unicodedata.category(ch) != "Mn").lower()
+
+
+def buscar(ind, clave):
+    if clave.isdigit() and 1 <= int(clave) <= len(ind["cuentas"]):
+        return ind["cuentas"][int(clave) - 1]
+    for c in ind["cuentas"]:
+        if normal(c["nombre"]) == normal(clave) or normal(c.get("email", "")) == normal(clave):
+            return c
+    sys.exit(f"No encontré la cuenta «{clave}». Corre `cuenta-claude` para ver la lista.")
+
+
+def listar(ind):
+    if not ind["cuentas"]:
+        print("No hay cuentas guardadas. Corre: cuenta-claude guardar <nombre>")
+        return
+    act = uuid_activa(ind)
+    for i, c in enumerate(ind["cuentas"], 1):
+        marca = "●" if c["uuid"] == act else " "
+        print(f" {marca} {i}. {c['nombre']:<12} {c.get('email', '')}  ({c.get('plan', '')})")
+    if not any(c["uuid"] == act for c in ind["cuentas"]):
+        print("\n  La sesión activa no está guardada. Corre: cuenta-claude guardar <nombre>")
+
+
+def cambiar(ind, clave):
+    destino = buscar(ind, clave)
+    respaldar_activa(ind)
+    if destino["uuid"] == uuid_activa(ind):
+        print(f"Ya estás en «{destino['nombre']}».")
+        return
+    ranura = leer_llavero(SVC_CUENTA, destino["nombre"])
+    if not ranura:
+        sys.exit(f"La cuenta «{destino['nombre']}» no tiene datos en el Llavero. Vuelve a guardarla.")
+    data = activa()  # conserva mcpOAuth y lo demás
+    data["claudeAiOauth"] = ranura["claudeAiOauth"]
+    if ranura.get("organizationUuid"):
+        data["organizationUuid"] = ranura["organizationUuid"]
+    escribir_llavero(SVC_ACTIVA, USER, data)
+    if ranura.get("oauthAccount"):
+        with open(CLAUDE_JSON) as f:
+            cfg = json.load(f)
+        cfg["oauthAccount"] = ranura["oauthAccount"]
+        escribir_json_atomico(CLAUDE_JSON, cfg)
+    vence = ranura["claudeAiOauth"].get("refreshTokenExpiresAt")
+    aviso = ""
+    if vence and vence / 1000 < time.time():
+        aviso = "\n  Ojo: la sesión guardada de esta cuenta ya venció; tendrás que hacer /login una vez."
+    print(f"Listo: ahora estás en «{destino['nombre']}» ({destino.get('email', '')}).\n"
+          f"  Los chats NUEVOS usan esta cuenta. Cierra los chats viejos (o usa «Abrir limpio»).{aviso}")
+
+
+def pedir(url, headers, datos=None):
+    body = json.dumps(datos).encode() if datos is not None else None
+    req = urllib.request.Request(url, data=body, headers={**headers, "User-Agent": UA,
+                                 **({"Content-Type": "application/json"} if body else {})})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.load(r)
+
+
+def renovar(nombre, ranura):
+    """Renueva la sesión guardada de una cuenta que no está activa y guarda los tokens nuevos."""
+    o = ranura["claudeAiOauth"]
+    r = pedir(URL_TOKEN, {}, {"grant_type": "refresh_token", "refresh_token": o["refreshToken"],
+                              "client_id": CLIENT_ID, "scope": " ".join(o.get("scopes") or [])})
+    o["accessToken"] = r["access_token"]
+    if r.get("refresh_token"):
+        o["refreshToken"] = r["refresh_token"]
+    o["expiresAt"] = int(time.time() * 1000) + int(r.get("expires_in", 3600)) * 1000
+    escribir_llavero(SVC_CUENTA, nombre, ranura)
+    return o["accessToken"]
+
+
+def uso_de(token):
+    d = pedir(URL_USO, {"Authorization": "Bearer " + token, "anthropic-beta": "oauth-2025-04-20"})
+    vs = []
+    for clave, etiqueta in (("five_hour", "5 horas"), ("seven_day", "semanal")):
+        v = d.get(clave) or {}
+        if v.get("utilization") is not None:
+            vs.append({"grupo": "Claude", "etiqueta": etiqueta,
+                       "queda": max(0, round(100 - v["utilization"])), "recarga": v.get("resets_at")})
+    return vs
+
+
+def uso(ind):
+    """Cuánto le queda a cada cuenta guardada, preguntándole a Anthropic directo.
+    La activa usa el token que mantiene Claude Code (no se renueva aquí para no pelear con los chats);
+    las demás usan su copia guardada y se renuevan si ya venció."""
+    act = uuid_activa(ind)
+    ahora_ms = time.time() * 1000
+    res = []
+    for i, c in enumerate(ind["cuentas"], 1):
+        fila = {"n": i, "nombre": c["nombre"], "email": c.get("email", ""), "plan": c.get("plan", ""),
+                "activa": c["uuid"] == act, "ventanas": [], "error": None}
+        try:
+            if fila["activa"]:
+                o = activa()["claudeAiOauth"]
+                if o.get("expiresAt", 0) < ahora_ms:
+                    raise RuntimeError("abre un chat para actualizar")
+                token = o["accessToken"]
+            else:
+                ranura = leer_llavero(SVC_CUENTA, c["nombre"])
+                if not ranura:
+                    raise RuntimeError("sin sesión guardada")
+                o = ranura["claudeAiOauth"]
+                token = o["accessToken"] if o.get("expiresAt", 0) > ahora_ms + 120000 else renovar(c["nombre"], ranura)
+            fila["ventanas"] = uso_de(token)
+        except urllib.error.HTTPError as e:
+            fila["error"] = "sesión vencida: haz /login con esta cuenta" if e.code in (400, 401, 403) else f"error {e.code}"
+        except Exception as e:  # sin internet, timeout, etc.
+            fila["error"] = str(e)[:80]
+        res.append(fila)
+    return res
+
+
+def main():
+    args = sys.argv[1:]
+    if sys.platform != "darwin":
+        if args and args[0] in ("--uso", "--json"):
+            print(json.dumps({"cuentas": [], "error": "cuenta-claude solo funciona en Mac"}))
+            return
+        sys.exit("cuenta-claude solo funciona en Mac por ahora (usa el Llavero).")
+    ind = leer_indice()
+    if not args:
+        respaldar_activa(ind)
+        listar(ind)
+    elif args[0] == "--uso":
+        respaldar_activa(ind)
+        print(json.dumps({"cuentas": uso(ind), "leido": int(time.time() * 1000)}, ensure_ascii=False))
+    elif args[0] == "--json":
+        respaldar_activa(ind)
+        act = uuid_activa(ind)
+        print(json.dumps({"cuentas": [{"n": i, "nombre": c["nombre"], "email": c.get("email", ""),
+                                       "plan": c.get("plan", ""), "activa": c["uuid"] == act}
+                                      for i, c in enumerate(ind["cuentas"], 1)]}, ensure_ascii=False))
+    elif args[0] == "guardar":
+        nombre = args[1] if len(args) > 1 else oauth_account().get("emailAddress", "cuenta").split("@")[0]
+        e = respaldar_activa(ind, nombre)
+        print(f"Guardada «{e['nombre']}» ({e.get('email', '')}).")
+        listar(ind)
+    elif args[0] == "borrar" and len(args) > 1:
+        c = buscar(ind, args[1])
+        subprocess.run(["security", "delete-generic-password", "-s", SVC_CUENTA, "-a", c["nombre"]],
+                       capture_output=True)
+        ind["cuentas"].remove(c)
+        guardar_indice(ind)
+        print(f"Quité «{c['nombre']}» de la lista (la sesión activa no se toca).")
+    elif args[0] == "renombrar" and len(args) > 2:
+        c, nuevo = buscar(ind, args[1]), args[2]
+        if any(normal(x["nombre"]) == normal(nuevo) for x in ind["cuentas"] if x is not c):
+            sys.exit(f"Ya hay una cuenta llamada «{nuevo}».")
+        ranura = leer_llavero(SVC_CUENTA, c["nombre"])
+        if ranura:
+            escribir_llavero(SVC_CUENTA, nuevo, ranura)
+            if nuevo != c["nombre"]:
+                subprocess.run(["security", "delete-generic-password", "-s", SVC_CUENTA, "-a", c["nombre"]],
+                               capture_output=True)
+        print(f"«{c['nombre']}» ahora se llama «{nuevo}».")
+        c["nombre"] = nuevo
+        guardar_indice(ind)
+        listar(ind)
+    elif args[0] in ("-h", "--help", "ayuda"):
+        print(__doc__)
+    else:
+        cambiar(ind, args[0])
+
+
+if __name__ == "__main__":
+    main()
