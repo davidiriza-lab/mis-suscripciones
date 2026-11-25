@@ -37,6 +37,7 @@ SVC_CUENTA = "Claude Code-cuenta"
 CLAUDE_JSON = os.path.expanduser("~/.claude.json")
 INDICE = os.path.expanduser("~/.claude/cuentas-claude.json")
 URL_USO = "https://api.anthropic.com/api/oauth/usage"
+URL_PERFIL = "https://api.anthropic.com/api/oauth/profile"
 URL_TOKEN = "https://platform.claude.com/v1/oauth/token"
 CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"  # el de Claude Code
 UA = "cuenta-claude/1.0"
@@ -96,24 +97,47 @@ def oauth_account():
         return json.load(f).get("oauthAccount", {})
 
 
+_perfiles = {}
+
+
+def perfil(token):
+    """A qué persona y organización pertenece una sesión, según Anthropic (None si no se pudo preguntar).
+    Es la fuente confiable: ~/.claude.json tarda en actualizarse después de un /login."""
+    if token in _perfiles:
+        return _perfiles[token]
+    r = None
+    try:
+        p = pedir(URL_PERFIL, {"Authorization": "Bearer " + token, "anthropic-beta": "oauth-2025-04-20"})
+        acc, org = p.get("account") or {}, p.get("organization") or {}
+        if acc.get("uuid") and org.get("uuid"):
+            r = {"uuid": acc["uuid"], "email": acc.get("email") or acc.get("email_address") or "",
+                 "org": org["uuid"], "organizacion": org.get("name") or ""}
+    except Exception:
+        pass
+    _perfiles[token] = r
+    return r
+
+
 def identificar(data, ind):
-    """Qué cuenta guardada es la sesión activa. Devuelve (entrada o None, accountUuid, organizationUuid).
-    Una misma persona puede estar en varias organizaciones (mismo correo, otro plan), así que una cuenta
-    es persona + organización. Primero se busca por refreshToken (exacto); si Claude ya lo renovó,
-    por persona + organización. Las cuentas Team no traen accountUuid en el Llavero: sale de ~/.claude.json."""
+    """Qué cuenta guardada es la sesión activa. Devuelve (entrada o None, accountUuid, organizationUuid, perfil).
+    Una cuenta es persona + organización: el mismo correo puede tener varias suscripciones.
+    Se le pregunta a Anthropic; si no responde, solo se acepta una coincidencia exacta de refreshToken."""
     oauth = data["claudeAiOauth"]
+    p = perfil(oauth["accessToken"]) if oauth.get("expiresAt", 0) > time.time() * 1000 else None
+    if p:
+        for c in ind["cuentas"]:
+            if c["uuid"] == p["uuid"] and c.get("org") == p["org"]:
+                return c, p["uuid"], p["org"], p
+        for c in ind["cuentas"]:  # índices viejos sin organización
+            if c["uuid"] == p["uuid"] and not c.get("org"):
+                return c, p["uuid"], p["org"], p
+        return None, p["uuid"], p["org"], p
     rt = oauth.get("refreshToken")
     for c in ind["cuentas"]:
         ranura = leer_llavero(SVC_CUENTA, c["nombre"]) or {}
         if rt and ranura.get("claudeAiOauth", {}).get("refreshToken") == rt:
-            return c, c["uuid"], c.get("org")
-    acc = oauth_account()
-    uuid = oauth.get("accountUuid") or acc.get("accountUuid")
-    org = acc.get("organizationUuid") if acc.get("accountUuid") == uuid else None
-    for c in ind["cuentas"]:
-        if c["uuid"] == uuid and (org is None or c.get("org") in (org, None)):
-            return c, uuid, org
-    return None, uuid, org
+            return c, c["uuid"], c.get("org"), None
+    return None, None, None, None
 
 
 def entrada_activa(ind):
@@ -124,10 +148,15 @@ def respaldar_activa(ind, nombre=None):
     """Guarda la sesión activa en su ranura (la de su misma persona y organización, o una nueva con `nombre`)."""
     data = activa()
     oauth = data["claudeAiOauth"]
+    entrada, uuid, org, p = identificar(data, ind)
+    if uuid is None:
+        if nombre is None:
+            return None
+        sys.exit("No pude confirmar con Anthropic de qué cuenta es la sesión activa. "
+                 "Manda un mensaje en un chat (para que Claude Code la renueve) y repite.")
     acc = oauth_account()
-    entrada, uuid, org = identificar(data, ind)
     if acc.get("accountUuid") != uuid or (org and acc.get("organizationUuid") != org):
-        acc = {}  # .claude.json todavía no se actualizó; no mezclar datos de otra cuenta
+        acc = {}  # ~/.claude.json todavía no se actualiza: no mezclar datos de otra organización
     if entrada is None:
         if nombre is None:
             return None
@@ -143,15 +172,22 @@ def respaldar_activa(ind, nombre=None):
         entrada["nombre"] = nombre
     if org:
         entrada["org"] = org
-    previa = leer_llavero(SVC_CUENTA, entrada["nombre"]) or {}
+    previa = (leer_llavero(SVC_CUENTA, entrada["nombre"]) or {}).get("oauthAccount") or {}
+    if previa.get("organizationUuid") != org:
+        previa = {}
+    datos_cuenta = acc or previa or ({"accountUuid": uuid, "emailAddress": p["email"], "organizationUuid": org,
+                                      "organizationName": p["organizacion"]} if p else {})
     escribir_llavero(SVC_CUENTA, entrada["nombre"], {
         "claudeAiOauth": oauth,
-        "organizationUuid": data.get("organizationUuid"),
-        "oauthAccount": acc or previa.get("oauthAccount", {}),
+        "organizationUuid": org or data.get("organizationUuid"),
+        "oauthAccount": datos_cuenta,
     })
-    if acc:
+    entrada["plan"] = oauth.get("subscriptionType", entrada.get("plan", ""))
+    if p:
+        entrada["email"] = p["email"] or entrada.get("email", "")
+        entrada["organizacion"] = p["organizacion"]
+    elif acc:
         entrada["email"] = acc.get("emailAddress", entrada.get("email", ""))
-        entrada["plan"] = oauth.get("subscriptionType", "")
         if acc.get("organizationName"):
             entrada["organizacion"] = acc["organizationName"]
     guardar_indice(ind)
@@ -271,6 +307,9 @@ def uso(ind):
                     raise RuntimeError("sin sesión guardada")
                 o = ranura["claudeAiOauth"]
                 token = o["accessToken"] if o.get("expiresAt", 0) > ahora_ms + 120000 else renovar(c["nombre"], ranura)
+                pp = perfil(token)
+                if pp and c.get("org") and pp["org"] != c["org"]:
+                    raise RuntimeError("sesión de otra organización: haz /login con esta cuenta")
             fila["ventanas"] = uso_de(token)
         except urllib.error.HTTPError as e:
             fila["error"] = "sesión vencida: haz /login con esta cuenta" if e.code in (400, 401, 403) else f"error {e.code}"
