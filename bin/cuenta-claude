@@ -2,6 +2,7 @@
 """cuenta-claude: tener varias cuentas de Claude guardadas y cambiar sin volver a loguear.
 
 Solo Mac (usa el Llavero). En Linux el panel funciona con una sola cuenta.
+Un mismo correo en dos organizaciones o suscripciones cuenta como dos cuentas.
 
 Uso:
   cuenta-claude                 lista las cuentas guardadas y marca la activa
@@ -58,9 +59,15 @@ def escribir_llavero(svc, acct, data):
 def leer_indice():
     try:
         with open(INDICE) as f:
-            return json.load(f)
+            ind = json.load(f)
     except FileNotFoundError:
         return {"cuentas": []}
+    # Índices viejos no guardaban la organización: se toma de la sesión guardada de cada cuenta.
+    for c in ind["cuentas"]:
+        if "org" not in c:
+            ranura = leer_llavero(SVC_CUENTA, c["nombre"]) or {}
+            c["org"] = (ranura.get("oauthAccount") or {}).get("organizationUuid")
+    return ind
 
 
 def guardar_indice(ind):
@@ -88,41 +95,52 @@ def oauth_account():
 
 
 def identificar(data, ind):
-    """accountUuid de la sesión activa. Las cuentas Team no lo traen en el Llavero:
-    entonces se busca por refreshToken entre las guardadas y, si no, se usa ~/.claude.json."""
+    """Qué cuenta guardada es la sesión activa. Devuelve (entrada o None, accountUuid, organizationUuid).
+    Una misma persona puede estar en varias organizaciones (mismo correo, otro plan), así que una cuenta
+    es persona + organización. Primero se busca por refreshToken (exacto); si Claude ya lo renovó,
+    por persona + organización. Las cuentas Team no traen accountUuid en el Llavero: sale de ~/.claude.json."""
     oauth = data["claudeAiOauth"]
-    if oauth.get("accountUuid"):
-        return oauth["accountUuid"]
     rt = oauth.get("refreshToken")
     for c in ind["cuentas"]:
         ranura = leer_llavero(SVC_CUENTA, c["nombre"]) or {}
         if rt and ranura.get("claudeAiOauth", {}).get("refreshToken") == rt:
-            return c["uuid"]
-    return oauth_account().get("accountUuid")
+            return c, c["uuid"], c.get("org")
+    acc = oauth_account()
+    uuid = oauth.get("accountUuid") or acc.get("accountUuid")
+    org = acc.get("organizationUuid") if acc.get("accountUuid") == uuid else None
+    for c in ind["cuentas"]:
+        if c["uuid"] == uuid and (org is None or c.get("org") in (org, None)):
+            return c, uuid, org
+    return None, uuid, org
 
 
-def uuid_activa(ind):
-    return identificar(activa(), ind)
+def entrada_activa(ind):
+    return identificar(activa(), ind)[0]
 
 
 def respaldar_activa(ind, nombre=None):
-    """Guarda la sesión activa en su ranura (la que tenga su mismo accountUuid, o `nombre`)."""
+    """Guarda la sesión activa en su ranura (la de su misma persona y organización, o una nueva con `nombre`)."""
     data = activa()
     oauth = data["claudeAiOauth"]
     acc = oauth_account()
-    uuid = identificar(data, ind)
-    if acc.get("accountUuid") != uuid:
+    entrada, uuid, org = identificar(data, ind)
+    if acc.get("accountUuid") != uuid or (org and acc.get("organizationUuid") != org):
         acc = {}  # .claude.json todavía no se actualizó; no mezclar datos de otra cuenta
-    entrada = next((c for c in ind["cuentas"] if c["uuid"] == uuid), None)
     if entrada is None:
         if nombre is None:
             return None
-        if any(c["nombre"] == nombre for c in ind["cuentas"]):
-            sys.exit(f"Ya existe una cuenta llamada «{nombre}» con otro correo. Usa otro nombre.")
-        entrada = {"nombre": nombre, "uuid": uuid}
+        if any(normal(c["nombre"]) == normal(nombre) for c in ind["cuentas"]):
+            sys.exit(f"Ya existe una cuenta llamada «{nombre}». Usa otro nombre.")
+        entrada = {"nombre": nombre, "uuid": uuid, "org": org}
         ind["cuentas"].append(entrada)
     elif nombre and nombre != entrada["nombre"]:
+        if any(normal(c["nombre"]) == normal(nombre) for c in ind["cuentas"] if c is not entrada):
+            sys.exit(f"Ya existe una cuenta llamada «{nombre}». Usa otro nombre.")
+        subprocess.run(["security", "delete-generic-password", "-s", SVC_CUENTA, "-a", entrada["nombre"]],
+                       capture_output=True)
         entrada["nombre"] = nombre
+    if org:
+        entrada["org"] = org
     previa = leer_llavero(SVC_CUENTA, entrada["nombre"]) or {}
     escribir_llavero(SVC_CUENTA, entrada["nombre"], {
         "claudeAiOauth": oauth,
@@ -132,6 +150,8 @@ def respaldar_activa(ind, nombre=None):
     if acc:
         entrada["email"] = acc.get("emailAddress", entrada.get("email", ""))
         entrada["plan"] = oauth.get("subscriptionType", "")
+        if acc.get("organizationName"):
+            entrada["organizacion"] = acc["organizationName"]
     guardar_indice(ind)
     return entrada
 
@@ -154,18 +174,19 @@ def listar(ind):
     if not ind["cuentas"]:
         print("No hay cuentas guardadas. Corre: cuenta-claude guardar <nombre>")
         return
-    act = uuid_activa(ind)
+    act = entrada_activa(ind)
     for i, c in enumerate(ind["cuentas"], 1):
-        marca = "●" if c["uuid"] == act else " "
-        print(f" {marca} {i}. {c['nombre']:<12} {c.get('email', '')}  ({c.get('plan', '')})")
-    if not any(c["uuid"] == act for c in ind["cuentas"]):
+        marca = "●" if c is act else " "
+        org = f" · {c['organizacion']}" if c.get("organizacion") else ""
+        print(f" {marca} {i}. {c['nombre']:<12} {c.get('email', '')}  ({c.get('plan', '')}{org})")
+    if act is None:
         print("\n  La sesión activa no está guardada. Corre: cuenta-claude guardar <nombre>")
 
 
 def cambiar(ind, clave):
     destino = buscar(ind, clave)
     respaldar_activa(ind)
-    if destino["uuid"] == uuid_activa(ind):
+    if destino is entrada_activa(ind):
         print(f"Ya estás en «{destino['nombre']}».")
         return
     ranura = leer_llavero(SVC_CUENTA, destino["nombre"])
@@ -225,12 +246,12 @@ def uso(ind):
     """Cuánto le queda a cada cuenta guardada, preguntándole a Anthropic directo.
     La activa usa el token que mantiene Claude Code (no se renueva aquí para no pelear con los chats);
     las demás usan su copia guardada y se renuevan si ya venció."""
-    act = uuid_activa(ind)
+    act = entrada_activa(ind)
     ahora_ms = time.time() * 1000
     res = []
     for i, c in enumerate(ind["cuentas"], 1):
         fila = {"n": i, "nombre": c["nombre"], "email": c.get("email", ""), "plan": c.get("plan", ""),
-                "activa": c["uuid"] == act, "ventanas": [], "error": None}
+                "activa": c is act, "ventanas": [], "error": None}
         try:
             if fila["activa"]:
                 o = activa()["claudeAiOauth"]
@@ -268,9 +289,9 @@ def main():
         print(json.dumps({"cuentas": uso(ind), "leido": int(time.time() * 1000)}, ensure_ascii=False))
     elif args[0] == "--json":
         respaldar_activa(ind)
-        act = uuid_activa(ind)
+        act = entrada_activa(ind)
         print(json.dumps({"cuentas": [{"n": i, "nombre": c["nombre"], "email": c.get("email", ""),
-                                       "plan": c.get("plan", ""), "activa": c["uuid"] == act}
+                                       "plan": c.get("plan", ""), "activa": c is act}
                                       for i, c in enumerate(ind["cuentas"], 1)]}, ensure_ascii=False))
     elif args[0] == "guardar":
         nombre = args[1] if len(args) > 1 else oauth_account().get("emailAddress", "cuenta").split("@")[0]

@@ -114,7 +114,7 @@ Pregúntale si usa otra cuenta de Claude en esta computadora (por ejemplo la del
 ~/.local/bin/cuenta-claude guardar "Trabajo"
 ```
 
-3. Corre `~/.local/bin/cuenta-claude`: deben salir todas las cuentas guardadas, con un `●` en la activa y el correo de cada una. Si dos salen con el mismo correo, el `/login` no cambió de cuenta: que lo repita con la otra.
+3. Corre `~/.local/bin/cuenta-claude`: deben salir todas las cuentas guardadas, con un `●` en la activa, su correo y su organización. Un mismo correo puede estar dos veces si son organizaciones o suscripciones distintas (al hacer `/login`, el navegador pregunta cuál). Si guardar dice que ya existe esa cuenta, el `/login` no cambió de cuenta u organización: que lo repita eligiendo la otra.
 
 ### 5.4 Dejar activa la principal
 
