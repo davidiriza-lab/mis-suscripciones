@@ -297,6 +297,14 @@ def uso(ind):
     for i, c in enumerate(ind["cuentas"], 1):
         fila = {"n": i, "nombre": c["nombre"], "email": c.get("email", ""), "plan": plan_de(c),
                 "activa": c is act, "ventanas": [], "error": None}
+        previo = c.get("ultimo_uso") or {}
+        # Anthropic limita cuántas veces se le pregunta. Una cuenta que no estás usando casi no cambia:
+        # se consulta como mucho cada 10 min; y si contestó 429, se espera la pausa antes de volver a preguntar.
+        reciente = ahora_ms - previo.get("leido", 0) < (60 if fila["activa"] else 10 * 60) * 1000
+        if previo.get("ventanas") and (reciente or ahora_ms < c.get("pausa_hasta", 0)):
+            fila["ventanas"] = previo["ventanas"]
+            res.append(fila)
+            continue
         try:
             if fila["activa"]:
                 o = activa()["claudeAiOauth"]
@@ -321,9 +329,15 @@ def uso(ind):
                         cambio = True
             fila["ventanas"] = uso_de(token)
             c["ultimo_uso"] = {"ventanas": fila["ventanas"], "leido": int(ahora_ms)}
+            c.pop("pausa_hasta", None)
+            c.pop("pausa_min", None)
             cambio = True
         except urllib.error.HTTPError as e:
             fila["error"] = "sesión vencida: haz /login con esta cuenta" if e.code in (400, 401, 403) else f"error {e.code}"
+            if e.code == 429:  # pausa creciente: 10, 20, 30 min
+                c["pausa_min"] = min(30, c.get("pausa_min", 0) + 10)
+                c["pausa_hasta"] = int(ahora_ms + c["pausa_min"] * 60 * 1000)
+                cambio = True
         except Exception as e:  # sin internet, timeout, etc.
             fila["error"] = str(e)[:80]
         # Si Anthropic no contestó (límite de consultas, sin internet), se muestra el último dato bueno
