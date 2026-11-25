@@ -21,6 +21,7 @@ Este script guarda una copia de la parte de Claude de cada cuenta en el Llavero
 Los tokens de tus conectores MCP no se tocan.
 Antes de cada cambio vuelve a guardar la cuenta activa, porque Claude renueva sus tokens.
 """
+import hashlib
 import json
 import os
 import subprocess
@@ -292,6 +293,7 @@ def uso(ind):
     act = entrada_activa(ind)
     ahora_ms = time.time() * 1000
     res = []
+    cambio = False
     for i, c in enumerate(ind["cuentas"], 1):
         fila = {"n": i, "nombre": c["nombre"], "email": c.get("email", ""), "plan": plan_de(c),
                 "activa": c is act, "ventanas": [], "error": None}
@@ -307,15 +309,32 @@ def uso(ind):
                     raise RuntimeError("sin sesión guardada")
                 o = ranura["claudeAiOauth"]
                 token = o["accessToken"] if o.get("expiresAt", 0) > ahora_ms + 120000 else renovar(c["nombre"], ranura)
-                pp = perfil(token)
-                if pp and c.get("org") and pp["org"] != c["org"]:
-                    raise RuntimeError("sesión de otra organización: haz /login con esta cuenta")
+                # ¿la sesión guardada es de esta organización? Solo se revisa cuando la sesión cambia,
+                # para no gastar el límite de consultas de Anthropic.
+                huella = hashlib.sha256(o["refreshToken"].encode()).hexdigest()[:16]
+                if c.get("org") and c.get("revisada") != huella:
+                    pp = perfil(token)
+                    if pp and pp["org"] != c["org"]:
+                        raise RuntimeError("sesión de otra organización: haz /login con esta cuenta")
+                    if pp:
+                        c["revisada"] = huella
+                        cambio = True
             fila["ventanas"] = uso_de(token)
+            c["ultimo_uso"] = {"ventanas": fila["ventanas"], "leido": int(ahora_ms)}
+            cambio = True
         except urllib.error.HTTPError as e:
             fila["error"] = "sesión vencida: haz /login con esta cuenta" if e.code in (400, 401, 403) else f"error {e.code}"
         except Exception as e:  # sin internet, timeout, etc.
             fila["error"] = str(e)[:80]
+        # Si Anthropic no contestó (límite de consultas, sin internet), se muestra el último dato bueno
+        # de la última hora. Una sesión vencida o de otra organización sí se muestra como error.
+        previo = c.get("ultimo_uso") or {}
+        if (fila["error"] and not fila["error"].startswith(("sesión", "sin sesión"))
+                and previo.get("ventanas") and ahora_ms - previo.get("leido", 0) < 60 * 60 * 1000):
+            fila["ventanas"], fila["error"], fila["viejo"] = previo["ventanas"], None, previo["leido"]
         res.append(fila)
+    if cambio:
+        guardar_indice(ind)
     return res
 
 
