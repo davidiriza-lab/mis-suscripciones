@@ -11,7 +11,7 @@ Reglas para toda la instalación:
 - No pidas contraseñas, llaves ni tokens. Los inicios de sesión los hace el usuario en su navegador.
 - No instales nada que no esté en estos pasos.
 
-Antes de empezar, dile en dos líneas qué vas a hacer: instalar el panel, conectar sus cuentas de Claude y, si las tiene, las de ChatGPT y Gemini.
+Antes de empezar, dile en dos líneas qué vas a hacer: instalar el panel, conectar sus cuentas de Claude y, solo si las tiene, las de ChatGPT y Gemini. Todo lo demás es opcional: el panel muestra lo que conecte.
 
 ## 1. Revisar el sistema
 
@@ -131,25 +131,69 @@ Explícale:
 - En la terminal también puede cambiar: `cuenta-claude` (lista), `cuenta-claude 2` (cambia), `cuenta-claude renombrar 2 "Nuevo"`, `cuenta-claude borrar "Nombre"`.
 - Si una cuenta sale con "sesión vencida", basta cambiar a ella, hacer `/login` con esa cuenta una vez y correr `cuenta-claude guardar "Nombre"`.
 
-## 6. Configurar ChatGPT y Gemini (opcional)
+## 6. Conectar ChatGPT y Gemini (opcional)
 
-Pregúntale, en una sola pregunta, si tiene **ChatGPT** (Plus o superior) y/o **Google AI Pro o Ultra**. Si no tiene ninguna, el panel funciona solo con Claude: no insistas y sigue al paso 7.
+El panel se adapta solo: muestra Claude siempre, y GPT y Gemini únicamente si los conecta. Lo que no conecte no aparece ni marca error.
 
-Para cada una que tenga, revisa si ya funciona:
+Pregúntale, en una sola pregunta, si tiene **ChatGPT** (Plus o superior) y/o **Google AI Pro o Ultra**. Conecta solo las que tenga; no hacen falta las dos. Si no tiene ninguna, no insistas y sigue al paso 7: se pueden agregar después repitiendo esta instalación.
+
+### 6.1 Instalar los programas de cuota
+
+| Suscripción | Programas en `~/.local/bin/` |
+|---|---|
+| ChatGPT | `codex-sub`, `cuota-gpt` |
+| Google | `cuota-gemini` |
+
+Revisa solo los de las suscripciones que tiene:
 
 ```bash
-~/.local/bin/cuota-gpt --json      # ChatGPT
-~/.local/bin/cuota-gemini --json   # Gemini
+T="${TMPDIR:-/tmp}/mis-suscripciones"
+mkdir -p ~/.local/bin
+for f in codex-sub cuota-gpt cuota-gemini; do
+  if [ ! -e ~/.local/bin/$f ]; then echo "NUEVO     $f"
+  elif cmp -s "$T/bin/$f" ~/.local/bin/$f; then echo "IGUAL     $f"
+  else echo "DISTINTO  $f"; fi
+done
 ```
 
-- Si responde con `"ok": true`, esa ya está lista.
-- Si el archivo no existe, esa parte viene del repo `davidiriza-lab/claude-con-gemini-y-gpt`. Dile que se instala aparte y ofrece hacerlo ahora siguiendo su `INSTALAR.md` (instala solo la parte de las suscripciones que tiene; ese instalador lo guía para entrar a Codex con su cuenta de ChatGPT y a Antigravity con su cuenta de Google):
-  `curl -fsSL https://raw.githubusercontent.com/davidiriza-lab/claude-con-gemini-y-gpt/main/INSTALAR.md`
-- Si existe pero responde con error de sesión:
-  - **ChatGPT**: que corra en su terminal `~/.local/bin/codex-sub login` y elija **Sign in with ChatGPT** (no una API key, que se cobra aparte).
-  - **Gemini**: que abra una terminal nueva, corra `~/.local/bin/agy`, entre con la cuenta de Google que tiene la suscripción y salga con `/quit`.
+- `NUEVO`: `cp "$T/bin/<archivo>" ~/.local/bin/ && chmod +x ~/.local/bin/<archivo>`
+- `IGUAL`: ya está al día.
+- `DISTINTO`: puede ser una versión anterior de esto mismo (por ejemplo del repo `claude-con-gemini-y-gpt`, que usa los mismos archivos) o algo suyo. Pregunta si reemplazarlo y, si sí, guarda antes una copia como `<archivo>.bak`.
 
-  **Espera** a que te diga que ya entró y vuelve a probar.
+### 6.2 ChatGPT: Codex con su cuenta
+
+1. `~/.local/bin/codex-sub --version`. Si dice que no encontró Codex, dale dos opciones:
+   - instalar en VS Code la extensión **Codex – OpenAI's coding agent** (la más fácil), o
+   - en la terminal: `npm i -g @openai/codex` (necesita Node.js).
+
+   **Espera** a que lo haga y vuelve a probar.
+2. `~/.local/bin/codex-sub login status`.
+   - Si dice **"Logged in using ChatGPT"**, sigue.
+   - Si no hay sesión, o dice que usa una **API key** (eso se cobra aparte): pídele que corra en su terminal `~/.local/bin/codex-sub login` y elija **Sign in with ChatGPT** en el navegador. **Espera** a que te diga que ya entró y vuelve a revisar.
+
+### 6.3 Gemini: Antigravity CLI con su cuenta de Google
+
+No uses el viejo `gemini` CLI ni una `GEMINI_API_KEY`: Google lo cerró para cuentas personales.
+
+1. Revisa si ya existe: `command -v agy || ls ~/.local/bin/agy`.
+2. Si no existe, se instala con el instalador oficial de Google. Si no tienes permiso para correrlo tú, dale el comando:
+   ```bash
+   curl -fsSL https://antigravity.google/cli/install.sh | bash
+   ```
+   Si al terminar abre solo la pantalla de inicio de sesión, ahí no se puede escribir: que la cierre con `Ctrl+C`.
+3. Iniciar sesión lo hace él, en una terminal **nueva**: `~/.local/bin/agy`. Se abre el navegador → entra con la cuenta de Google que tiene la suscripción → copia el código → lo pega en la terminal → elige un color (Enter), deja lo demás como viene y sale con `/quit`. **Espera** a que te diga que ya entró.
+4. Si sale **"not eligible"**, es un problema conocido de Google con algunas cuentas de AI Pro: deja Gemini fuera por ahora (borra `~/.local/bin/cuota-gemini` si lo acabas de instalar, para que el panel no lo muestre con error).
+
+### 6.4 Probar
+
+```bash
+~/.local/bin/cuota-gpt --json      # si conectó ChatGPT
+~/.local/bin/cuota-gemini --json   # si conectó Gemini
+```
+
+Cada uno debe responder con `"ok": true`. Si da error de sesión, repite el inicio de sesión de esa parte.
+
+Si además quiere **usar** esas suscripciones desde Claude (`/gpt`, `/gemini`, `/imagen`), eso es el repo `davidiriza-lab/claude-con-gemini-y-gpt`. Ofrécelo en una línea; no hace falta para el panel.
 
 ## 7. Probar y cerrar
 
@@ -165,7 +209,7 @@ Si el anillo de Claude sale vacío, casi siempre falta mandar un mensaje en una 
 
 Dile en pocas líneas:
 
-- qué quedó instalado (panel, mod, `cuenta-claude`, GPT, Gemini) y qué no, y por qué;
+- qué quedó instalado (panel, mod, `cuenta-claude`, GPT, Gemini) y qué no, y por qué; que lo que no conectó no aparece en el panel y se puede agregar cuando quiera repitiendo la instalación;
 - qué cuentas de Claude quedaron guardadas y cuál está activa;
 - que para actualizar después basta pegar otra vez el mismo mensaje con el que instaló;
 - y, si usa mucho Claude Code, que el panel avisa cuando un chat se hace largo (cada mensaje cuesta más) y ofrece **Abrir limpio**. Con los comandos `/iniciar-sesion` y `/cerrar-sesion` del repo `davidiriza-lab/sesiones-claude-code`, además detecta el cierre y le deja copiado el comando para retomar.

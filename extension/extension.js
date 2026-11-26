@@ -18,8 +18,10 @@ const CADA_MS = 15 * 60 * 1000
 // VS Code no hereda el PATH de la terminal: sin esto python3/agy/codex pueden no aparecer.
 const ENV = { ...process.env, PATH: ['/opt/homebrew/bin', '/usr/local/bin', path.join(HOME, '.local/bin'), process.env.PATH || ''].join(':') }
 
+// Si el programa no está instalado, esa IA no está conectada: el panel la oculta en vez de marcar error.
 function correr(archivo) {
   return new Promise(resolve => {
+    if (!fs.existsSync(archivo)) return resolve({ ok: false, sinConectar: true, ventanas: [], error: null })
     execFile(archivo, ['--json'], { env: ENV, timeout: 120000 }, (err, stdout) => {
       try {
         resolve(JSON.parse(stdout))

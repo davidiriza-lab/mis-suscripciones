@@ -1,0 +1,22 @@
+#!/bin/bash
+# Atajo a Codex con tu sesión de ChatGPT.
+# Usa el `codex` instalado en tu terminal; si no hay, busca el que trae la extensión
+# de Codex (OpenAI) en VS Code, Cursor o Windsurf, siempre la versión más nueva.
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+BIN=""
+while IFS= read -r c; do
+  [ "$c" != "$SELF" ] && BIN="$c" && break
+done < <(which -a codex 2>/dev/null)
+
+if [ -z "$BIN" ]; then
+  for base in "$HOME/.vscode/extensions" "$HOME/.cursor/extensions" "$HOME/.windsurf/extensions"; do
+    c=$(ls -d "$base"/openai.chatgpt-*/bin/*/codex 2>/dev/null | sort -V | tail -1)
+    [ -n "$c" ] && BIN="$c" && break
+  done
+fi
+
+if [ -z "$BIN" ]; then
+  echo "No encontré Codex. Instala la extensión de Codex (OpenAI) en VS Code, o en la terminal: npm i -g @openai/codex" >&2
+  exit 1
+fi
+exec "$BIN" "$@"

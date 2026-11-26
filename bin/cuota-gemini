@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Muestra cuánto te queda de Gemini (suscripción Google AI Pro/Ultra vía Antigravity CLI), en español.
+
+Uso: cuota-gemini [--json]
+Lee `agy -p /usage` y lo traduce a barras con tu hora local.
+"""
+from __future__ import annotations
+
+import shutil
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+
+AGY = shutil.which("agy") or str(Path.home() / ".local" / "bin" / "agy")
+DIAS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
+
+GRUPOS = {
+    "Gemini Models": "Gemini (todos)",
+    "Claude and GPT models": "Claude y GPT dentro de agy",
+}
+LIMITES = {
+    "Five Hour Limit Remaining": "cada 5 horas",
+    "Weekly Limit Remaining": "semanal",
+}
+
+
+def cuando(iso: str) -> str:
+    try:
+        t = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone()
+    except ValueError:  # si Google cambia el formato de la fecha, se muestra tal cual
+        return iso
+    hoy = datetime.now().astimezone().date()
+    if t.date() == hoy:
+        dia = "hoy"
+    elif (t.date() - hoy).days == 1:
+        dia = "mañana"
+    else:
+        dia = f"{DIAS[t.weekday()]} {t.day}"
+    return f"{dia} {t.strftime('%H:%M')}"
+
+
+def barra(pct: int) -> str:
+    llenos = round(pct / 10)
+    return "█" * llenos + "░" * (10 - llenos)
+
+
+def semaforo(pct: int) -> str:
+    return "bien" if pct >= 50 else "cuidado" if pct >= 20 else "casi vacío"
+
+
+def main() -> int:
+    if not Path(AGY).exists():
+        if "--json" in sys.argv:
+            import json
+            print(json.dumps({"ok": False, "ventanas": [], "error": "No encontré Antigravity CLI (agy)"}))
+            return 1
+        print("No encontré Antigravity CLI (agy). Instálalo con:")
+        print("  curl -fsSL https://antigravity.google/cli/install.sh | bash")
+        return 1
+    try:
+        out = subprocess.run([AGY, "-p", "/usage", "--print-timeout", "1m"], capture_output=True,
+                             text=True, timeout=90, stdin=subprocess.DEVNULL).stdout
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"No pude preguntarle a agy: {e}")
+        return 1
+
+    filas = [l.split("\t") for l in out.strip().splitlines() if l.count("\t") == 3]
+    if "--json" in sys.argv:  # para paneles y scripts: mismo dato, sin dibujo
+        import json
+        ventanas = [{"grupo": GRUPOS.get(g, g), "etiqueta": LIMITES.get(l, l), "queda": int(p.rstrip("%")), "recarga": r}
+                    for g, l, p, r in filas if g in GRUPOS and l in LIMITES]
+        print(json.dumps({"ok": bool(ventanas), "ventanas": ventanas,
+                          "error": None if ventanas else "agy no devolvió la cuota (¿sesión vencida?)"}))
+        return 0 if ventanas else 1
+    if not filas:
+        print("agy no devolvió la cuota. Si dice que no hay sesión: abre `agy` en una terminal, "
+              "entra con tu cuenta de Google y sal con /quit.")
+        print(out.strip())
+        return 1
+
+    print("Lo que te queda de tu suscripción de Google\n")
+    for grupo, nombre in GRUPOS.items():
+        lineas = []
+        for limite, etiqueta in LIMITES.items():
+            for g, l, pct, reset in filas:
+                if g == grupo and l == limite:
+                    p = int(pct.rstrip("%"))
+                    lineas.append(f"  {etiqueta:<13} {barra(p)} {p:>3}%  {semaforo(p):<10} se recarga {cuando(reset)}")
+        if lineas:
+            print(nombre)
+            print("\n".join(lineas))
+            print()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

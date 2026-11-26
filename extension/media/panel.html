@@ -30,6 +30,10 @@
 
   /* los tres anillos, de un vistazo */
   .trio { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 10px; }
+  .trio.n2 { grid-template-columns: repeat(2, 1fr); }
+  .trio.n1 { grid-template-columns: 1fr; }
+  .trio.n1 .anillo { width: 88px; }
+  .falta { margin: 2px 0 10px; font-size: 10.5px; color: var(--suave); text-align: center; }
   .ia { --m: var(--bien); --e: var(--bien); display: flex; flex-direction: column; align-items: center; min-width: 0; }
   .ia.claude { --m: var(--claude); } .ia.gpt { --m: var(--gpt); } .ia.gemini { --m: var(--gem-a); }
   .ia.ambar { --e: var(--ambar); } .ia.rojo { --e: var(--rojo); }
@@ -297,11 +301,15 @@
         extra: gpt && gpt.reinicios > 0 ? gpt.reinicios + ' reinicios gratis · vencen en ' + dentroDe(gpt.reinicioVence) : '' },
       { clase: 'gemini', nombre: 'Gemini', plan: 'AI Pro',
         ventanas: gem && gem.ventanas ? gem.ventanas.filter(w => w.grupo.startsWith('Gemini')) : [], error: gem && !gem.ok ? gem.error : null, extra: '' },
-    ]
+    ].filter(ia => ia.clase === 'claude' || !(ia.clase === 'gpt' ? gpt : gem)?.sinConectar)
+    // GPT y Gemini son opcionales: solo salen si su programa de cuota está instalado.
+    const faltan = [gpt && gpt.sinConectar && 'ChatGPT', gem && gem.sinConectar && 'Gemini'].filter(Boolean)
+    pintarGuia(ias.map(ia => ia.clase))
     const m = datos ? haceMin(datos.actualizado) : null
     cont.innerHTML =
-      '<div class="trio">' + ias.map(anillo).join('') + '</div>' +
+      '<div class="trio n' + ias.length + '">' + ias.map(anillo).join('') + '</div>' +
       estado(ias) +
+      (faltan.length ? '<div class="falta">¿Tienes ' + faltan.join(' o ') + '? Pídele a Claude que corra otra vez el instalador y ' + (faltan.length > 1 ? 'aparecen' : 'aparece') + ' aquí.</div>' : '') +
       ias.map(detalle).join('') +
       '<div class="pie"><span>' + (datos && datos.cargando ? 'actualizando…' : m === null ? 'sin datos' : m < 1 ? 'actualizado hace un momento' : 'actualizado hace ' + m + ' min') + '</span>' +
       '<button class="act" id="act"' + (datos && datos.cargando ? ' disabled' : '') + '>Actualizar</button></div>'
@@ -310,10 +318,16 @@
     animar()
   }
 
-  document.getElementById('guia').innerHTML = GUIA.map(g =>
-    '<div class="g ' + g.clase + '"><h3>' + esc(g.quien) + '<small>' + esc(g.como) + '</small></h3><ul>' +
-    g.para.map(p => '<li>' + esc(p) + '</li>').join('') + '</ul><div class="no"><b>No para:</b> ' + esc(g.no) + '</div></div>'
-  ).join('') + '<div class="nota-final">Gemini y GPT solo cuando tú lo pidas; Claude te los puede sugerir.</div>'
+  function pintarGuia(clases) {
+    const otras = clases.some(c => c !== 'claude')
+    document.getElementById('guia').innerHTML = GUIA.filter(g => clases.includes(g.clase)).map(g =>
+      '<div class="g ' + g.clase + '"><h3>' + esc(g.quien) + '<small>' + esc(g.como) + '</small></h3><ul>' +
+      // Con solo Claude no se habla de las otras IAs.
+      g.para.filter(p => otras || !/Gemini|GPT/.test(p)).map(p => '<li>' + esc(p) + '</li>').join('') + '</ul>' +
+      (otras || !/Gemini|GPT/.test(g.no) ? '<div class="no"><b>No para:</b> ' + esc(g.no) + '</div>' : '') + '</div>'
+    ).join('') + (otras ? '<div class="nota-final">Gemini y GPT solo cuando tú lo pidas; Claude te los puede sugerir.</div>' : '')
+  }
+  pintarGuia(GUIA.map(g => g.clase))
 
   // ── Chats recientes ── la lista se repinta sola; el buscador no se toca para no perder lo que escribes.
   const VISIBLES = 12
